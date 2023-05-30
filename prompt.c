@@ -4,27 +4,86 @@
 #include <editline.h>
 #include "vendor/mpc.h"
 
-long eval_op(char* op, long x, long y) {
-  if (strcmp(op, "+") == 0)
-    return x + y;
-  if (strcmp(op, "-") == 0)
-    return x - y;
-  if (strcmp(op, "/") == 0)
-    return x / y;
-  if (strcmp(op, "*") == 0)
-    return x * y;
+enum lval_type { LVAL_NUM, LVAL_ERR };
+enum lval_error { LERR_DIV_ZERO, LERR_BAD_OP, LERR_BAD_NUM };
 
-  return 0;
+struct lval {
+  long num;
+  enum lval_type type;
+  enum lval_error err;
+};
+
+struct lval lval_num(long x) {
+  struct lval v = {
+      .num = x,
+      .type = LVAL_NUM,
+  };
+  return v;
 }
 
-long eval(mpc_ast_t* ast) {
+struct lval lval_err(enum lval_error e) {
+  struct lval v = {
+      .err = e,
+      .type = LVAL_ERR,
+  };
+  return v;
+}
+
+void lval_print(struct lval v) {
+  if (v.type == LVAL_ERR) {
+    switch (v.err) {
+      case LERR_BAD_NUM:
+        puts("Error: Bad number!");
+        break;
+
+      case LERR_BAD_OP:
+        puts("Error: Bad operator!");
+        break;
+
+      case LERR_DIV_ZERO:
+        puts("Error: Division by zero!");
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  if (v.type == LVAL_NUM) {
+    printf("%li", v.num);
+  }
+
+  return;
+}
+
+void lval_println(struct lval v) {
+  lval_print(v);
+  putchar('\n');
+}
+
+struct lval eval_op(char* op, struct lval x, struct lval y) {
+  if (x.type == LVAL_ERR) return x;
+  if (y.type == LVAL_ERR) return y;
+
+  if (strcmp(op, "+") == 0) return lval_num(x.num + y.num);
+  if (strcmp(op, "-") == 0) return lval_num(x.num - y.num);
+  if (strcmp(op, "*") == 0) return lval_num(x.num * y.num);
+  if (strcmp(op, "/") == 0)
+    return y.num == 0 ? lval_err(LERR_DIV_ZERO) : lval_num(x.num / y.num);
+
+  return lval_err(LERR_BAD_OP);
+}
+
+struct lval eval(mpc_ast_t* ast) {
   if (strstr(ast->tag, "number")) {
-    return atoi(ast->contents);
+    errno = 0;
+    long n = strtol(ast->contents, NULL, 10);
+    return errno == ERANGE ? lval_err(LERR_BAD_NUM) : lval_num(n);
   }
 
   char* op = ast->children[1]->contents;
 
-  long x = eval(ast->children[2]);
+  struct lval x = eval(ast->children[2]);
 
   for (int i = 3; i < ast->children_num - 1; ++i) {
     x = eval_op(op, x, eval(ast->children[i]));
@@ -56,7 +115,7 @@ int main(void) {
     mpc_result_t result;
 
     if (mpc_parse("<stdin>", input, Lispy, &result)) {
-      printf("%li\n", eval(result.output));
+      lval_println(eval(result.output));
       mpc_ast_delete(result.output);
     } else {
       mpc_err_print(result.error);

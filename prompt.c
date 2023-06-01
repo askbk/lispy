@@ -12,7 +12,7 @@
 
 enum lval_type { LVAL_NUM, LVAL_ERR, LVAL_SYM, LVAL_SEXPR, LVAL_QEXPR };
 
-struct lval {
+typedef struct lval {
   enum lval_type type;
   long num;
 
@@ -22,18 +22,18 @@ struct lval {
   int count;
 
   struct lval** cell;
-};
+} lval;
 
-struct lval* lval_num(long x) {
-  struct lval* v = malloc(sizeof(struct lval));
+lval* lval_num(long x) {
+  lval* v = malloc(sizeof(lval));
   v->type = LVAL_NUM;
   v->num = x;
 
   return v;
 }
 
-struct lval* lval_err(char* m) {
-  struct lval* v = malloc(sizeof(struct lval));
+lval* lval_err(char* m) {
+  lval* v = malloc(sizeof(lval));
   v->type = LVAL_ERR;
   v->err = malloc(strlen(m) + 1);
   strcpy(v->err, m);
@@ -41,8 +41,8 @@ struct lval* lval_err(char* m) {
   return v;
 }
 
-struct lval* lval_sym(char* s) {
-  struct lval* v = malloc(sizeof(struct lval));
+lval* lval_sym(char* s) {
+  lval* v = malloc(sizeof(lval));
   v->type = LVAL_SYM;
   v->sym = malloc(strlen(s) + 1);
   strcpy(v->sym, s);
@@ -50,8 +50,8 @@ struct lval* lval_sym(char* s) {
   return v;
 }
 
-struct lval* lval_sexpr(void) {
-  struct lval* v = malloc(sizeof(struct lval));
+lval* lval_sexpr(void) {
+  lval* v = malloc(sizeof(lval));
   v->type = LVAL_SEXPR;
   v->count = 0;
   v->cell = NULL;
@@ -59,8 +59,8 @@ struct lval* lval_sexpr(void) {
   return v;
 }
 
-struct lval* lval_qexpr(void) {
-  struct lval* v = malloc(sizeof(struct lval));
+lval* lval_qexpr(void) {
+  lval* v = malloc(sizeof(lval));
   v->type = LVAL_QEXPR;
   v->count = 0;
   v->cell = NULL;
@@ -68,7 +68,7 @@ struct lval* lval_qexpr(void) {
   return v;
 }
 
-void lval_del(struct lval* v) {
+void lval_del(lval* v) {
   switch (v->type) {
     case LVAL_NUM:
       break;
@@ -94,26 +94,26 @@ void lval_del(struct lval* v) {
   return;
 }
 
-struct lval* lval_read_num(mpc_ast_t* ast) {
+lval* lval_read_num(mpc_ast_t* ast) {
   errno = 0;
   long n = strtol(ast->contents, NULL, 10);
 
   return errno == ERANGE ? lval_err("Invalid number") : lval_num(n);
 }
 
-struct lval* lval_add(struct lval* v, struct lval* x) {
+lval* lval_add(lval* v, lval* x) {
   v->count++;
-  v->cell = realloc(v->cell, sizeof(struct lval) * v->count);
+  v->cell = realloc(v->cell, sizeof(lval) * v->count);
   v->cell[v->count - 1] = x;
 
   return v;
 }
 
-struct lval* lval_read(mpc_ast_t* ast) {
+lval* lval_read(mpc_ast_t* ast) {
   if (strstr(ast->tag, "number")) return lval_read_num(ast);
   if (strstr(ast->tag, "symbol")) return lval_sym(ast->contents);
 
-  struct lval* x = NULL;
+  lval* x = NULL;
   if (strcmp(ast->tag, ">") == 0) x = lval_sexpr();
   if (strstr(ast->tag, "sexpr")) x = lval_sexpr();
   if (strstr(ast->tag, "qexpr")) x = lval_qexpr();
@@ -130,9 +130,9 @@ struct lval* lval_read(mpc_ast_t* ast) {
   return x;
 }
 
-void lval_print(struct lval* v);
+void lval_print(lval* v);
 
-void lval_sexpr_print(struct lval* v, char open, char close) {
+void lval_sexpr_print(lval* v, char open, char close) {
   putchar(open);
 
   for (int i = 0; i < v->count; ++i) {
@@ -144,7 +144,7 @@ void lval_sexpr_print(struct lval* v, char open, char close) {
   putchar(close);
 }
 
-void lval_print(struct lval* v) {
+void lval_print(lval* v) {
   switch (v->type) {
     case LVAL_NUM:
       printf("%li", v->num);
@@ -168,74 +168,73 @@ void lval_print(struct lval* v) {
   return;
 }
 
-void lval_println(struct lval* v) {
+void lval_println(lval* v) {
   lval_print(v);
   putchar('\n');
 }
 
 // Returns child i of v without deleting v.
-struct lval* lval_pop(struct lval* v, int i) {
-  struct lval* x = v->cell[i];
-  memmove(&v->cell[i], &v->cell[i + 1],
-          sizeof(struct lval*) * (v->count - i - 1));
+lval* lval_pop(lval* v, int i) {
+  lval* x = v->cell[i];
+  memmove(&v->cell[i], &v->cell[i + 1], sizeof(lval*) * (v->count - i - 1));
 
   --v->count;
 
-  v->cell = realloc(v->cell, sizeof(struct lval*) * v->count);
+  v->cell = realloc(v->cell, sizeof(lval*) * v->count);
 
   return x;
 }
 
 // Return child i of v and deletes v.
-struct lval* lval_take(struct lval* v, int i) {
-  struct lval* x = lval_pop(v, i);
+lval* lval_take(lval* v, int i) {
+  lval* x = lval_pop(v, i);
   lval_del(v);
 
   return x;
 }
-struct lval* lval_eval(struct lval* v);
-struct lval* builtin_head(struct lval* v) {
+lval* lval_eval(lval* v);
+lval* builtin_head(lval* v) {
   LASSERT(v, v->count == 1, "Function head must be called with one argument!");
   LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
           "Function head requires a Q-expression as its argument!");
   LASSERT(v, v->cell[1]->count > 0, "Function head received argument {}!");
 
-  struct lval* list = lval_take(v, 0);
-  struct lval* result = lval_qexpr();
+  lval* list = lval_take(v, 0);
+  lval* result = lval_qexpr();
   lval_add(result, lval_take(list, 0));
 
   return result;
 }
 
-struct lval* builtin_tail(struct lval* v) {
+lval* builtin_tail(lval* v) {
   LASSERT(v, v->count == 1, "Function tail must be called with one argument!");
   LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
           "Function tail requires a Q-expression as its argument!");
   LASSERT(v, v->cell[1]->count > 0, "Function tail received argument {}!");
 
-  struct lval* list = lval_take(v, 0);
+  lval* list = lval_take(v, 0);
 
   lval_del(lval_pop(list, 0));
 
   return list;
 }
 
-struct lval* builtin_list(struct lval* v) {
+lval* builtin_list(lval* v) {
   v->type = LVAL_QEXPR;
   return v;
 }
 
-struct lval* builtin_eval(struct lval* v) {
+lval* builtin_eval(lval* v) {
   LASSERT(v, v->count == 1, "Function eval only takes a single argument!");
   LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
           "Function eval only takes Q-expressions as argument!");
-  struct lval* x = lval_take(v, 0);
+  lval* x = lval_take(v, 0);
   x->type = LVAL_SEXPR;
 
   return lval_eval(x);
 }
 
-struct lval* lval_join(struct lval* x, struct lval* y) {
+lval* lval_join(lval* x, lval* y) {
   while (y->count) x = lval_add(x, lval_pop(y, 0));
 
   lval_del(y);
@@ -243,13 +242,13 @@ struct lval* lval_join(struct lval* x, struct lval* y) {
   return x;
 }
 
-struct lval* builtin_join(struct lval* v) {
+lval* builtin_join(lval* v) {
   for (int i = 0; i < v->count; ++i) {
     LASSERT(v, v->cell[i]->type == LVAL_QEXPR,
             "All arguments passed to 'join' must be Q-expressions!");
   }
 
-  struct lval* x = lval_pop(v, 0);
+  lval* x = lval_pop(v, 0);
 
   while (v->count) x = lval_join(x, lval_pop(v, 0));
 
@@ -258,7 +257,7 @@ struct lval* builtin_join(struct lval* v) {
   return x;
 }
 
-struct lval* builtin_op(struct lval* a, char* op) {
+lval* builtin_op(lval* a, char* op) {
   for (int i = 0; i < a->count; ++i) {
     if (a->cell[i]->type != LVAL_NUM) {
       lval_del(a);
@@ -266,12 +265,12 @@ struct lval* builtin_op(struct lval* a, char* op) {
     }
   }
 
-  struct lval* x = lval_pop(a, 0);
+  lval* x = lval_pop(a, 0);
 
   if (a->count == 0 && strcmp(op, "-") == 0) x->num = -x->num;
 
   while (a->count > 0) {
-    struct lval* y = lval_pop(a, 0);
+    lval* y = lval_pop(a, 0);
 
     if (strcmp(op, "+") == 0) x->num += y->num;
     if (strcmp(op, "-") == 0) x->num -= y->num;
@@ -292,7 +291,7 @@ struct lval* builtin_op(struct lval* a, char* op) {
   return x;
 }
 
-struct lval* builtin(struct lval* a, char* func) {
+lval* builtin(lval* a, char* func) {
   if (strcmp("list", func) == 0) return builtin_list(a);
   if (strcmp("head", func) == 0) return builtin_head(a);
   if (strcmp("tail", func) == 0) return builtin_tail(a);
@@ -303,7 +302,7 @@ struct lval* builtin(struct lval* a, char* func) {
   return lval_err("Unknown function!");
 }
 
-struct lval* lval_eval_sexpr(struct lval* v) {
+lval* lval_eval_sexpr(lval* v) {
   for (int i = 0; i < v->count; ++i) {
     v->cell[i] = lval_eval(v->cell[i]);
   }
@@ -315,7 +314,7 @@ struct lval* lval_eval_sexpr(struct lval* v) {
   if (v->count == 0) return v;
   if (v->count == 1) return lval_take(v, 0);
 
-  struct lval* f = lval_pop(v, 0);
+  lval* f = lval_pop(v, 0);
 
   if (f->type != LVAL_SYM) {
     lval_del(f);
@@ -323,13 +322,13 @@ struct lval* lval_eval_sexpr(struct lval* v) {
     return lval_err("S-expression does not start with a symbol!");
   }
 
-  struct lval* result = builtin(v, f->sym);
+  lval* result = builtin(v, f->sym);
   lval_del(f);
 
   return result;
 }
 
-struct lval* lval_eval(struct lval* v) {
+lval* lval_eval(lval* v) {
   if (v->type == LVAL_SEXPR) return lval_eval_sexpr(v);
 
   return v;
@@ -364,7 +363,7 @@ int main(void) {
     mpc_result_t result;
 
     if (mpc_parse("<stdin>", input, Lispy, &result)) {
-      struct lval* x = lval_eval(lval_read(result.output));
+      lval* x = lval_eval(lval_read(result.output));
       lval_println(x);
       lval_del(x);
       mpc_ast_delete(result.output);

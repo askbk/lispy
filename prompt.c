@@ -4,7 +4,13 @@
 #include <editline.h>
 #include "vendor/mpc.h"
 
-enum lval_type { LVAL_NUM, LVAL_ERR, LVAL_SYM, LVAL_SEXPR };
+#define LASSERT(lval, cond, err) \
+  if (!(cond)) {                 \
+    lval_del(lval);              \
+    return lval_err(err);        \
+  }
+
+enum lval_type { LVAL_NUM, LVAL_ERR, LVAL_SYM, LVAL_SEXPR, LVAL_QEXPR };
 
 struct lval {
   enum lval_type type;
@@ -53,6 +59,15 @@ struct lval* lval_sexpr(void) {
   return v;
 }
 
+struct lval* lval_qexpr(void) {
+  struct lval* v = malloc(sizeof(struct lval));
+  v->type = LVAL_QEXPR;
+  v->count = 0;
+  v->cell = NULL;
+
+  return v;
+}
+
 void lval_del(struct lval* v) {
   switch (v->type) {
     case LVAL_NUM:
@@ -63,6 +78,7 @@ void lval_del(struct lval* v) {
     case LVAL_SYM:
       free(v->sym);
       break;
+    case LVAL_QEXPR:
     case LVAL_SEXPR:
       for (int i = 0; i < v->count; ++i) {
         lval_del(v->cell[i]);
@@ -100,10 +116,13 @@ struct lval* lval_read(mpc_ast_t* ast) {
   struct lval* x = NULL;
   if (strcmp(ast->tag, ">") == 0) x = lval_sexpr();
   if (strstr(ast->tag, "sexpr")) x = lval_sexpr();
+  if (strstr(ast->tag, "qexpr")) x = lval_qexpr();
 
   for (int i = 0; i < ast->children_num; ++i) {
     if (strcmp(ast->children[i]->contents, "(") == 0) continue;
     if (strcmp(ast->children[i]->contents, ")") == 0) continue;
+    if (strcmp(ast->children[i]->contents, "{") == 0) continue;
+    if (strcmp(ast->children[i]->contents, "}") == 0) continue;
     if (strcmp(ast->children[i]->tag, "regex") == 0) continue;
     x = lval_add(x, lval_read(ast->children[i]));
   }
@@ -139,6 +158,9 @@ void lval_print(struct lval* v) {
     case LVAL_SEXPR:
       lval_sexpr_print(v, '(', ')');
       break;
+    case LVAL_QEXPR:
+      lval_sexpr_print(v, '{', '}');
+      break;
     default:
       break;
   }
@@ -151,6 +173,7 @@ void lval_println(struct lval* v) {
   putchar('\n');
 }
 
+// Returns child i of v without deleting v.
 struct lval* lval_pop(struct lval* v, int i) {
   struct lval* x = v->cell[i];
   memmove(&v->cell[i], &v->cell[i + 1],
@@ -163,8 +186,73 @@ struct lval* lval_pop(struct lval* v, int i) {
   return x;
 }
 
+// Return child i of v and deletes v.
 struct lval* lval_take(struct lval* v, int i) {
   struct lval* x = lval_pop(v, i);
+  lval_del(v);
+
+  return x;
+}
+struct lval* lval_eval(struct lval* v);
+struct lval* builtin_head(struct lval* v) {
+  LASSERT(v, v->count == 1, "Function head must be called with one argument!");
+  LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
+          "Function head requires a Q-expression as its argument!");
+  LASSERT(v, v->cell[1]->count > 0, "Function head received argument {}!");
+
+  struct lval* list = lval_take(v, 0);
+  struct lval* result = lval_qexpr();
+  lval_add(result, lval_take(list, 0));
+
+  return result;
+}
+
+struct lval* builtin_tail(struct lval* v) {
+  LASSERT(v, v->count == 1, "Function tail must be called with one argument!");
+  LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
+          "Function tail requires a Q-expression as its argument!");
+  LASSERT(v, v->cell[1]->count > 0, "Function tail received argument {}!");
+
+  struct lval* list = lval_take(v, 0);
+
+  lval_del(lval_pop(list, 0));
+
+  return list;
+}
+
+struct lval* builtin_list(struct lval* v) {
+  v->type = LVAL_QEXPR;
+  return v;
+}
+
+struct lval* builtin_eval(struct lval* v) {
+  LASSERT(v, v->count == 1, "Function eval only takes a single argument!");
+  LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
+          "Function eval only takes Q-expressions as argument!");
+  struct lval* x = lval_take(v, 0);
+  x->type = LVAL_SEXPR;
+
+  return lval_eval(x);
+}
+
+struct lval* lval_join(struct lval* x, struct lval* y) {
+  while (y->count) x = lval_add(x, lval_pop(y, 0));
+
+  lval_del(y);
+
+  return x;
+}
+
+struct lval* builtin_join(struct lval* v) {
+  for (int i = 0; i < v->count; ++i) {
+    LASSERT(v, v->cell[i]->type == LVAL_QEXPR,
+            "All arguments passed to 'join' must be Q-expressions!");
+  }
+
+  struct lval* x = lval_pop(v, 0);
+
+  while (v->count) x = lval_join(x, lval_pop(v, 0));
+
   lval_del(v);
 
   return x;
@@ -204,7 +292,17 @@ struct lval* builtin_op(struct lval* a, char* op) {
   return x;
 }
 
-struct lval* lval_eval(struct lval* v);
+struct lval* builtin(struct lval* a, char* func) {
+  if (strcmp("list", func) == 0) return builtin_list(a);
+  if (strcmp("head", func) == 0) return builtin_head(a);
+  if (strcmp("tail", func) == 0) return builtin_tail(a);
+  if (strcmp("join", func) == 0) return builtin_join(a);
+  if (strcmp("eval", func) == 0) return builtin_eval(a);
+  if (strstr("+-/*", func)) return builtin_op(a, func);
+  lval_del(a);
+  return lval_err("Unknown function!");
+}
+
 struct lval* lval_eval_sexpr(struct lval* v) {
   for (int i = 0; i < v->count; ++i) {
     v->cell[i] = lval_eval(v->cell[i]);
@@ -225,7 +323,7 @@ struct lval* lval_eval_sexpr(struct lval* v) {
     return lval_err("S-expression does not start with a symbol!");
   }
 
-  struct lval* result = builtin_op(v, f->sym);
+  struct lval* result = builtin(v, f->sym);
   lval_del(f);
 
   return result;
@@ -242,17 +340,21 @@ int main(void) {
   mpc_parser_t* Number = mpc_new("number");
   mpc_parser_t* Expr = mpc_new("expr");
   mpc_parser_t* Sexpr = mpc_new("sexpr");
+  mpc_parser_t* Qexpr = mpc_new("qexpr");
   mpc_parser_t* Lispy = mpc_new("lispy");
 
   mpca_lang(MPCA_LANG_DEFAULT,
-            "                                \
-    number : /-?[0-9]+/                    ; \
-    symbol : /[+-\\/*]/                    ; \
-    sexpr  : '(' <expr>* ')'               ; \
-    expr   : <number> | <symbol> | <sexpr> ; \
-    lispy  : /^/ <expr>* /$/               ; \
+            "                                          \
+    number : /-?[0-9]+/                              ; \
+    symbol : '+' | '-' | '*' | '/' | \"list\"          \
+             | \"head\"  | \"tail\"  | \"join\"        \
+             | \"eval\"                              ; \
+    sexpr  : '(' <expr>* ')'                         ; \
+    qexpr  : '{' <expr>* '}'                         ; \
+    expr   : <number> | <symbol> | <sexpr> | <qexpr> ; \
+    lispy  : /^/ <expr>* /$/                         ; \
     ",
-            Number, Symbol, Expr, Lispy, Sexpr);
+            Number, Symbol, Expr, Lispy, Sexpr, Qexpr);
 
   puts("Ctrl-C to exit");
 
@@ -276,7 +378,7 @@ int main(void) {
     free(input);
   }
 
-  mpc_cleanup(5, Number, Symbol, Expr, Lispy, Sexpr);
+  mpc_cleanup(6, Number, Symbol, Expr, Lispy, Sexpr, Qexpr);
 
   return 0;
 }

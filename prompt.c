@@ -1,13 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 #include <editline.h>
 #include "vendor/mpc.h"
 
-#define LASSERT(lval, cond, err) \
-  if (!(cond)) {                 \
-    lval_del(lval);              \
-    return lval_err(err);        \
+#define LASSERT(args, cond, fmt, ...)           \
+  if (!(cond)) {                                \
+    lval* err = lval_err((fmt), ##__VA_ARGS__); \
+    lval_del(args);                             \
+    return err;                                 \
   }
 
 typedef struct lval lval;
@@ -20,6 +22,17 @@ enum lval_type {
   LVAL_QEXPR,
   LVAL_FUN
 };
+
+char* ltype_name(enum lval_type t) {
+  if (t == LVAL_NUM) return "Number";
+  if (t == LVAL_ERR) return "Error";
+  if (t == LVAL_SYM) return "Symbol";
+  if (t == LVAL_SEXPR) return "S-expression";
+  if (t == LVAL_QEXPR) return "Q-expression";
+  if (t == LVAL_FUN) return "Function";
+
+  return "Unknown";
+}
 
 typedef lval* (*lbuiltin)(lenv*, lval*);
 
@@ -202,11 +215,20 @@ lval* lval_num(long x) {
   return v;
 }
 
-lval* lval_err(char* m) {
+lval* lval_err(char* fmt, ...) {
   lval* v = malloc(sizeof(lval));
   v->type = LVAL_ERR;
-  v->err = malloc(strlen(m) + 1);
-  strcpy(v->err, m);
+
+  va_list va;
+  va_start(va, fmt);
+
+  v->err = malloc(512);
+
+  vsnprintf(v->err, 511, fmt, va);
+
+  v->err = realloc(v->err, strlen(v->err) + 1);
+
+  va_end(va);
 
   return v;
 }
@@ -216,7 +238,7 @@ lval* lenv_get(lenv* e, lval* k) {
     if (strcmp(e->syms[i], k->sym) == 0) return lval_copy(e->vals[i]);
   }
 
-  return lval_err("Unbound symbol!");
+  return lval_err("Unbound symbol '%s'!", k->sym);
 }
 
 lval* lval_sym(char* s) {
@@ -311,9 +333,12 @@ lval* lval_take(lval* v, int i) {
 }
 lval* lval_eval(lenv* e, lval* v);
 lval* builtin_head(lenv* e, lval* v) {
-  LASSERT(v, v->count == 1, "Function head must be called with one argument!");
+  LASSERT(v, v->count == 1,
+          "Function head must be called with one argument, received %i!",
+          v->count);
   LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
-          "Function head requires a Q-expression as its argument!");
+          "Function head requires a Q-expression as its argument, received %s!",
+          ltype_name(v->cell[0]->type));
   LASSERT(v, v->cell[1]->count > 0, "Function head received argument {}!");
 
   lval* list = lval_take(v, 0);

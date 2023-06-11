@@ -408,12 +408,8 @@ lval* lval_take(lval* v, int i) {
 }
 lval* lval_eval(lenv* e, lval* v);
 lval* builtin_head(lenv* e, lval* v) {
-  LASSERT(v, v->count == 1,
-          "Function head must be called with one argument, received %i!",
-          v->count);
-  LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
-          "Function head requires a Q-expression as its argument, received %s!",
-          ltype_name(v->cell[0]->type));
+  LASSERT_NUM("head", v, 1);
+  LASSERT_TYPE("head", v, 0, LVAL_QEXPR);
   LASSERT(v, v->cell[1]->count > 0, "Function head received argument {}!");
 
   lval* list = lval_take(v, 0);
@@ -424,9 +420,8 @@ lval* builtin_head(lenv* e, lval* v) {
 }
 
 lval* builtin_tail(lenv* e, lval* v) {
-  LASSERT(v, v->count == 1, "Function tail must be called with one argument!");
-  LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
-          "Function tail requires a Q-expression as its argument!");
+  LASSERT_NUM("tail", v, 1);
+  LASSERT_TYPE("tail", v, 0, LVAL_QEXPR);
   LASSERT(v, v->cell[1]->count > 0, "Function tail received argument {}!");
 
   lval* list = lval_take(v, 0);
@@ -442,9 +437,8 @@ lval* builtin_list(lenv* e, lval* v) {
 }
 
 lval* builtin_eval(lenv* e, lval* v) {
-  LASSERT(v, v->count == 1, "Function eval only takes a single argument!");
-  LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
-          "Function eval only takes Q-expressions as argument!");
+  LASSERT_NUM("eval", v, 1);
+  LASSERT_TYPE("eval", v, 0, LVAL_QEXPR);
   lval* x = lval_take(v, 0);
   x->type = LVAL_SEXPR;
 
@@ -475,9 +469,7 @@ lval* builtin_join(lenv* e, lval* v) {
 }
 
 lval* builtin_def(lenv* e, lval* v) {
-  LASSERT(v, v->cell[0]->type == LVAL_QEXPR,
-          "First argument to 'def' should be a Q-expression containing all "
-          "symbols to bind!");
+  LASSERT_TYPE("def", v, 0, LVAL_QEXPR);
 
   lval* syms = v->cell[0];
 

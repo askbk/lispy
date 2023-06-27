@@ -77,7 +77,7 @@ lval* lval_copy(lval* v) {
     c->builtin = v->builtin;
     if (v->builtin == NULL) {
       c->body = lval_copy(v->body);
-      c->formals = lval_copy(v->body);
+      c->formals = lval_copy(v->formals);
       c->env = lenv_copy(v->env);
     }
 
@@ -91,7 +91,7 @@ lval* lval_copy(lval* v) {
   }
 
   if (v->type == LVAL_SYM) {
-    v->sym = malloc(strlen(v->sym) + 1);
+    c->sym = malloc(strlen(v->sym) + 1);
     strcpy(c->sym, v->sym);
     return c;
   }
@@ -406,6 +406,37 @@ lval* lval_take(lval* v, int i) {
 
   return x;
 }
+
+lval* builtin_eval(lenv* e, lval* v);
+
+lval* lval_call(lenv* e, lval* f, lval* args) {
+  if (f->builtin) return f->builtin(e, args);
+
+  int given = args->count;
+  int total = f->formals->count;
+
+  if (given > total)
+    return lval_err(
+        "User-defined function expects %i arguments, but was given %i.", total,
+        given);
+
+  while (args->count) {
+    lval* sym = lval_pop(f->formals, 0);
+    lval* val = lval_pop(args, 0);
+    lenv_put(f->env, sym, val);
+    lval_del(sym);
+    lval_del(val);
+  }
+
+  lval_del(args);
+
+  if (given < total) return lval_copy(f);
+
+  f->env->par = e;
+
+  return builtin_eval(f->env, lval_add(lval_sexpr(), lval_copy(f->body)));
+}
+
 lval* lval_eval(lenv* e, lval* v);
 lval* builtin_head(lenv* e, lval* v) {
   LASSERT_NUM("head", v, 1);
@@ -468,28 +499,37 @@ lval* builtin_join(lenv* e, lval* v) {
   return x;
 }
 
-lval* builtin_def(lenv* e, lval* v) {
-  LASSERT_TYPE("def", v, 0, LVAL_QEXPR);
+lval* builtin_var(lenv* e, lval* v, char* func) {
+  LASSERT_TYPE(func, v, 0, LVAL_QEXPR)
 
   lval* syms = v->cell[0];
 
   for (int i = 0; i < syms->count; ++i) {
     LASSERT(v, syms->cell[i]->type == LVAL_SYM,
-            "Only symbols may be bound to values!");
+            "Function '%s' must define %s, but received %s.", func,
+            ltype_name(LVAL_SYM), ltype_name(syms->cell[i]->type));
   }
 
-  LASSERT(v, syms->count == v->count - 1,
-          "The number of symbols to bind should match the number of subsequent "
-          "arguments to 'def'!");
+  LASSERT(
+      v, syms->count == v->count - 1,
+      "The number of symbols to bind should match the number of subsequent "
+      "expressions to '%s'. Received %i symbols to bind, but %i expressions.",
+      func, syms->count, v->count - 1);
 
   for (int i = 0; i < syms->count; ++i) {
-    lenv_put(e, syms->cell[i], v->cell[i + 1]);
+    if (strcmp(func, "def") == 0) lenv_def(e, syms->cell[i], v->cell[i + 1]);
+
+    if (strcmp(func, "=") == 0) lenv_put(e, syms->cell[i], v->cell[i + 1]);
   }
 
   lval_del(v);
 
   return lval_sexpr();
 }
+
+lval* builtin_def(lenv* e, lval* v) { return builtin_var(e, v, "def"); }
+
+lval* builtin_put(lenv* e, lval* v) { return builtin_var(e, v, "="); }
 
 lval* builtin_lambda(lenv* e, lval* a) {
   LASSERT_NUM("\\", a, 2);
@@ -511,12 +551,7 @@ lval* builtin_lambda(lenv* e, lval* a) {
 
 lval* builtin_op(lenv* e, lval* a, char* op) {
   for (int i = 0; i < a->count; ++i) {
-    if (a->cell[i]->type != LVAL_NUM) {
-      printf("attempted to perform op %s on lval", op);
-      lval_println(a);
-      lval_del(a);
-      return lval_err("Not a number");
-    }
+    LASSERT_TYPE(op, a, i, LVAL_NUM);
   }
 
   lval* x = lval_pop(a, 0);
@@ -565,6 +600,7 @@ void lenv_add_builtins(lenv* e) {
   lenv_add_builtin(e, "join", builtin_join);
   lenv_add_builtin(e, "eval", builtin_eval);
   lenv_add_builtin(e, "def", builtin_def);
+  lenv_add_builtin(e, "=", builtin_put);
   lenv_add_builtin(e, "\\", builtin_lambda);
   lenv_add_builtin(e, "+", builtin_add);
   lenv_add_builtin(e, "-", builtin_sub);
@@ -573,7 +609,6 @@ void lenv_add_builtins(lenv* e) {
 }
 
 lval* lval_eval_sexpr(lenv* e, lval* v) {
-  lval_println(v);
   for (int i = 0; i < v->count; ++i) {
     v->cell[i] = lval_eval(e, v->cell[i]);
   }
@@ -588,12 +623,15 @@ lval* lval_eval_sexpr(lenv* e, lval* v) {
   lval* f = lval_pop(v, 0);
 
   if (f->type != LVAL_FUN) {
+    lval* err = lval_err(
+        "First element of %s must be of type %s, but received %s.",
+        ltype_name(LVAL_SEXPR), ltype_name(LVAL_FUN), ltype_name(f->type));
     lval_del(v);
     lval_del(f);
-    return lval_err("First element of S-expression is not a function!");
+    return err;
   }
 
-  lval* result = f->builtin(e, v);
+  lval* result = lval_call(e, f, v);
   lval_del(f);
 
   return result;

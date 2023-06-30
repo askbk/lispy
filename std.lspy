@@ -1,6 +1,7 @@
 ;;; Atoms
 (def {nil} {})
 (def {true} 1)
+(def {otherwise} 1)
 (def {false} 0)
 
 ;;; Function definition
@@ -18,28 +19,57 @@
     eval (head l)
 })
 
+(fun {second l} {
+    first (tail l)
+})
+
 (fun {map f l} {
     if (== l nil) 
         {nil} 
         {join (list (f (first l))) (map f (tail l))}
 })
 
-(fun {fold f l acc} {
+(fun {foldr f acc l} {
     if (== l nil)
         {acc}
-        {(f (first l) (fold f (tail l) acc))}
+        {f (first l) (foldr f acc (tail l))}
 })
 
 (fun {filter f l} {
-    if (== l nil) 
+    if (== l nil)
         {nil}
         {
-            join (if (first l) {head l} {nil}) (filter f (tail l))
+            join (if (f (first l))
+                    {head l}
+                    {nil}
+                )
+                (filter f (tail l))
         }
 })
 
-(def {fib} (\ {n} {
-    if (<= n 1 )
-    {1} 
-    {+ (fib (- n 1)) (fib (- n 2))}
-}))
+(fun {sum l} {
+    foldr (\ {x total} {+ x total}) 0 l
+})
+
+;;; Conditional functions
+(fun {select & cs} {
+    second (
+        first (
+            filter first cs
+        )
+    )
+})
+
+;;; Misc
+(fun {range a b} {
+    if (== a b) 
+        {{}}
+        {join (list a) (range (+ a 1) b)}
+})
+
+(fun {fib n} {
+    select
+        {(== n 0) 1}
+        {(== n 1) 1}
+        {otherwise (+ (fib (- n 1)) (fib (- n 2)))}
+})

@@ -24,6 +24,16 @@
           func_name, index, ltype_name(expected_type),                       \
           ltype_name(args->cell[index]->type))
 
+mpc_parser_t* Number;
+mpc_parser_t* String;
+mpc_parser_t* Symbol;
+mpc_parser_t* Comment;
+mpc_parser_t* Error;
+mpc_parser_t* Expr;
+mpc_parser_t* Sexpr;
+mpc_parser_t* Qexpr;
+mpc_parser_t* Lispy;
+
 typedef struct lval lval;
 typedef struct lenv lenv;
 enum lval_type {
@@ -423,7 +433,7 @@ lval* lval_read(mpc_ast_t* ast) {
     if (strcmp(ast->children[i]->contents, "{") == 0) continue;
     if (strcmp(ast->children[i]->contents, "}") == 0) continue;
     if (strcmp(ast->children[i]->tag, "regex") == 0) continue;
-    if (strcmp(ast->children[i]->tag, "comment") == 0) continue;
+    if (strstr(ast->children[i]->tag, "comment")) continue;
     x = lval_add(x, lval_read(ast->children[i]));
   }
 
@@ -706,6 +716,45 @@ lval* builtin_if(lenv* e, lval* a) {
   return r;
 }
 
+lval* builtin_load(lenv* e, lval* a) {
+  LASSERT_NUM("load", a, 1);
+  LASSERT_TYPE("load", a, 0, LVAL_STR);
+
+  mpc_result_t r;
+  if (mpc_parse_contents(a->cell[0]->str, Lispy, &r)) {
+    lval* expr = lval_read(r.output);
+    mpc_ast_delete(r.output);
+
+    while (expr->count) {
+      lval* x = lval_eval(e, lval_pop(expr, 0));
+      if (x->type == LVAL_ERR) lval_println(x);
+      lval_del(x);
+    }
+
+    lval_del(expr);
+    lval_del(a);
+
+    return lval_sexpr();
+  } else {
+    char* err_msg = mpc_err_string(r.error);
+    mpc_err_delete(r.error);
+    lval* err = lval_err("Cannot load file '%s': %s", a->cell[0]->str, err_msg);
+    free(err_msg);
+    lval_del(a);
+    return err;
+  }
+}
+
+lval* builtin_print(lenv* e, lval* a) {
+  for (int i = 0; i < a->count; ++i) {
+    lval_print(a->cell[i]);
+    putchar(' ');
+  }
+  putchar('\n');
+  lval_del(a);
+  return lval_sexpr();
+}
+
 void lenv_add_builtin(lenv* e, char* name, lbuiltin func) {
   lval* k = lval_sym(name);
   lval* f = lval_fun(func);
@@ -734,6 +783,8 @@ void lenv_add_builtins(lenv* e) {
   lenv_add_builtin(e, "==", builtin_eq);
   lenv_add_builtin(e, "!=", builtin_neq);
   lenv_add_builtin(e, "if", builtin_if);
+  lenv_add_builtin(e, "load", builtin_load);
+  lenv_add_builtin(e, "print", builtin_print);
 }
 
 lval* lval_eval_sexpr(lenv* e, lval* v) {
@@ -778,15 +829,15 @@ lval* lval_eval(lenv* e, lval* v) {
   return v;
 }
 
-int main(void) {
-  mpc_parser_t* Symbol = mpc_new("symbol");
-  mpc_parser_t* Number = mpc_new("number");
-  mpc_parser_t* String = mpc_new("string");
-  mpc_parser_t* Comment = mpc_new("comment");
-  mpc_parser_t* Expr = mpc_new("expr");
-  mpc_parser_t* Sexpr = mpc_new("sexpr");
-  mpc_parser_t* Qexpr = mpc_new("qexpr");
-  mpc_parser_t* Lispy = mpc_new("lispy");
+int main(int argc, char** argv) {
+  Symbol = mpc_new("symbol");
+  Number = mpc_new("number");
+  String = mpc_new("string");
+  Comment = mpc_new("comment");
+  Expr = mpc_new("expr");
+  Sexpr = mpc_new("sexpr");
+  Qexpr = mpc_new("qexpr");
+  Lispy = mpc_new("lispy");
 
   mpca_lang(MPCA_LANG_DEFAULT,
             "                                    \
@@ -802,33 +853,37 @@ int main(void) {
     ",
             Number, Symbol, Expr, Lispy, Sexpr, Qexpr, String, Comment);
 
-  puts("Ctrl-C to exit");
-
   lenv* e = lenv_new();
   lenv_add_builtins(e);
-  lval* test_expr = lval_sexpr();
-  test_expr = lval_add(
-      lval_add(lval_add(test_expr, lval_sym("+")), lval_num(1)), lval_num(2));
-  lval* result = lval_eval(e, test_expr);
-  lval_println(result);
 
-  while (1) {
-    char* input = readline("lispy> ");
-    add_history(input);
+  if (argc == 1) {
+    puts("Ctrl-C to exit");
+    while (1) {
+      char* input = readline("lispy> ");
+      add_history(input);
 
-    mpc_result_t result;
-    if (mpc_parse("<stdin>", input, Lispy, &result)) {
-      lval* x = lval_eval(e, lval_read(result.output));
+      mpc_result_t result;
+      if (mpc_parse("<stdin>", input, Lispy, &result)) {
+        lval* x = lval_eval(e, lval_read(result.output));
+        lval_println(x);
+        lval_del(x);
+
+        mpc_ast_delete(result.output);
+      } else {
+        mpc_err_print(result.error);
+        mpc_err_delete(result.error);
+      }
+
+      free(input);
+    }
+  } else {
+    for (int i = 1; i < argc; ++i) {
+      lval* arg = lval_add(lval_sexpr(), lval_str(argv[i]));
+      lval* x = builtin_load(e, arg);
+      if (x->type == LVAL_ERR) lval_println(x);
       lval_println(x);
       lval_del(x);
-
-      mpc_ast_delete(result.output);
-    } else {
-      mpc_err_print(result.error);
-      mpc_err_delete(result.error);
     }
-
-    free(input);
   }
 
   lenv_del(e);

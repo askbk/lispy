@@ -489,6 +489,7 @@ int lval_eq(lval* x, lval* y) {
 }
 
 lval* builtin_eval(lenv* e, lval* v);
+lval* builtin_list(lenv* e, lval* v);
 
 lval* lval_call(lenv* e, lval* f, lval* args) {
   if (f->builtin) return f->builtin(e, args);
@@ -496,13 +497,30 @@ lval* lval_call(lenv* e, lval* f, lval* args) {
   int given = args->count;
   int total = f->formals->count;
 
-  if (given > total)
-    return lval_err(
-        "User-defined function expects %i arguments, but was given %i.", total,
-        given);
-
   while (args->count) {
+    if (f->formals->count == 0) {
+      lval_del(args);
+      return lval_err(
+          "User-defined function expects %i arguments, but was given %i.",
+          total, given);
+    }
+
     lval* sym = lval_pop(f->formals, 0);
+
+    if (strcmp(sym->sym, "&") == 0) {
+      if (f->formals->count != 1) {
+        lval_del(args);
+        return lval_err(
+            "'&' must be followed by a single symbol in arguments list.");
+      }
+
+      lval* nsym = lval_pop(f->formals, 0);
+      lenv_put(f->env, nsym, builtin_list(e, args));
+      lval_del(nsym);
+      lval_del(sym);
+      break;
+    }
+
     lval* val = lval_pop(args, 0);
     lenv_put(f->env, sym, val);
     lval_del(sym);
@@ -511,11 +529,28 @@ lval* lval_call(lenv* e, lval* f, lval* args) {
 
   lval_del(args);
 
-  if (given < total) return lval_copy(f);
+  if (f->formals->count > 0 && strcmp(f->formals->cell[0]->sym, "&") == 0) {
+    if (f->formals->count != 2) {
+      return lval_err(
+          "Variadic function call must have a single symbol after '&'");
+    }
 
-  f->env->par = e;
+    lval_del(lval_pop(f->formals, 0));
+    lval* sym = lval_pop(f->formals, 0);
+    lval* q = lval_qexpr();
 
-  return builtin_eval(f->env, lval_add(lval_sexpr(), lval_copy(f->body)));
+    lenv_put(f->env, sym, q);
+    lval_del(sym);
+    lval_del(q);
+  }
+
+  if (f->formals->count == 0) {
+    f->env->par = e;
+
+    return builtin_eval(f->env, lval_add(lval_sexpr(), lval_copy(f->body)));
+  } else {
+    return lval_copy(f);
+  }
 }
 
 lval* lval_eval(lenv* e, lval* v);
@@ -755,6 +790,15 @@ lval* builtin_print(lenv* e, lval* a) {
   return lval_sexpr();
 }
 
+lval* builtin_error(lenv* e, lval* a) {
+  LASSERT_NUM("error", a, 1);
+  LASSERT_TYPE("error", a, 0, LVAL_STR);
+
+  lval* err = lval_err(a->cell[0]->str);
+  lval_del(a);
+  return err;
+}
+
 void lenv_add_builtin(lenv* e, char* name, lbuiltin func) {
   lval* k = lval_sym(name);
   lval* f = lval_fun(func);
@@ -785,6 +829,7 @@ void lenv_add_builtins(lenv* e) {
   lenv_add_builtin(e, "if", builtin_if);
   lenv_add_builtin(e, "load", builtin_load);
   lenv_add_builtin(e, "print", builtin_print);
+  lenv_add_builtin(e, "error", builtin_error);
 }
 
 lval* lval_eval_sexpr(lenv* e, lval* v) {

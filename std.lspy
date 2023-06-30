@@ -1,0 +1,45 @@
+;;; Atoms
+(def {nil} {})
+(def {true} 1)
+(def {false} 0)
+
+;;; Function definition
+(def {fun} (\ {f b} {
+    def (head f) (\ (tail f) b)
+}))
+
+;;; Logical functions
+(fun {not b} {- 1 b})
+(fun {or a b} {+ a b})
+(fun {and a b} {* a b})
+
+;;; List functions
+(fun {first l} {
+    eval (head l)
+})
+
+(fun {map f l} {
+    if (== l nil) 
+        {nil} 
+        {join (list (f (first l))) (map f (tail l))}
+})
+
+(fun {fold f l acc} {
+    if (== l nil)
+        {acc}
+        {(f (first l) (fold f (tail l) acc))}
+})
+
+(fun {filter f l} {
+    if (== l nil) 
+        {nil}
+        {
+            join (if (first l) {head l} {nil}) (filter f (tail l))
+        }
+})
+
+(def {fib} (\ {n} {
+    if (<= n 1 )
+    {1} 
+    {+ (fib (- n 1)) (fib (- n 2))}
+}))
